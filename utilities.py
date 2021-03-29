@@ -11,12 +11,13 @@ Example:
 """
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 import pingouin as pg
+import statsmodels.api as sm
 import pandas as pd
 
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from scipy import stats
+from scipy import stats, optimize
 import numpy as np
 
 from collections import defaultdict
@@ -71,6 +72,103 @@ def categorize_data_type(
 
     rv = pd.Series(data_types, index=df.columns, name='Data type')
     return rv
+
+def nearest_neighbor_value(vals, val):
+    '''
+    Return array entry with value closest to target entry
+    
+    Arguments :
+        vals : array of comparable values (e.g. float, string)
+        val  : target value
+    Returns:
+        nearest neighbor value
+    
+    >>> nearest_neighbor_value([2,3,5],2)
+    3
+    >>> nearest_neighbor_value([2,5,3],2)
+    3
+    '''
+    vals = np.sort(vals)
+    index = np.where(vals == val)[0][0]
+    if index == len(vals)-1: # target entry in back
+        nneighbor = vals[index-1]
+    elif index == 0: # target entry in front
+        nneighbor = vals[1]
+    else: # Target entry in middle
+        diff_lo = abs(val - vals[index-1])
+        diff_hi = abs(val - vals[index+1])
+        nneighbor = vals[index-1] if diff_lo < diff_hi else vals[index+1]
+    return nneighbor
+
+def outlier_check(df, index, num_features, discrete_thr=10, print_result=False):
+    """
+    Calculate outlier statistics for each feature of a given entry
+    
+    Arguments:
+        df           : Input DataFrame
+        index        : Index of entry
+        num_features : Numerical features in df
+        discrete_thr : Threshold on number of unique values for calculating numerical outlier statistics
+        print_result : print results instead of returning them
+    
+    Returns:
+        (df_numerical, df_categorical) : Outlier statatistis for numerical and categorical variables
+    """
+    num_scores = defaultdict(dict)
+    cat_scores = defaultdict(dict)
+    for f in df.columns:
+        vals = df[f]
+        val = vals[index]
+        vc = vals.value_counts()
+        mode = vc.index[0]
+        if f in num_features and len(vc) > discrete_thr:
+            num_scores['Value'][f] = val
+            if pd.isnull(val): continue
+            num_scores['Mean'][f] = vals.mean()
+            num_scores['Median'][f] = vals.median()
+            num_scores['NN value'][f] = nearest_neighbor_value(vals, val)
+            num_scores['|Z-score|'][f] = abs(stats.zscore(vals)[index])
+            #num_scores['percentile-score'][f] = stats.percentileofscore(vals, val)
+            median_resids = np.abs(vals - vals.median())
+            median_resid = np.abs(val - vals.median())
+            num_scores['percentile-score'][f] = stats.percentileofscore(median_resids, median_resid)
+            # MAD score 
+            # must account for cases where >50% of values are the same
+            mad = stats.median_abs_deviation(vals)
+            if mad > 0: 
+                mad_score = median_resid/mad 
+            elif val == mode:
+                mad_score = 0
+            else: # val != mode
+                mad_score = float('inf')
+            num_scores['|MAD-score|'][f] = mad_score
+        else : # Categorical
+            cat_scores['Value'][f] = val
+            if pd.isnull(val): continue
+            ival = vc.index.get_loc(val)
+            inn = ival-1 if ival > 0 else 0
+            cat_scores['Mode'][f] = mode
+            cat_scores['freq'][f] = vc[val]
+            cat_scores['freq rank'][f] = ival + 1
+            cat_scores['# unique'][f] = len(vc)
+            cat_scores['rel freq'][f] = vc[val]/len(df)
+            cat_scores['cum freq'][f] = vc.iloc[ival:].sum()/len(df)
+            cat_scores['max freq ratio'][f] = vc[val]/vc[mode]
+            cat_scores['NN freq ratio'][f] = vc.iloc[ival]/vc.iloc[ival-1] if ival>0 else 1
+
+
+    df_num_scores = pd.DataFrame(num_scores)
+    df_cat_scores = pd.DataFrame(cat_scores)
+    if print_result:
+        print('Outlier test for entry', index)
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+            # Show two tables: one for continuous and another for categorical
+            print("Numerical Outliers")
+            display(df_num_scores.sort_values(['|Z-score|'], ascending=False))
+            print("Categorical Outliers")
+            display(df_cat_scores.sort_values(['cum freq']))
+    else:
+        return df_num_scores, df_cat_scores
 
 def corr_to_target(
         df : pd.DataFrame,
@@ -385,3 +483,67 @@ def plot_grid(
             ax.axis('off')
 
     return fig, axs
+
+def power_fit(
+        x : np.ndarray, 
+        y : np.ndarray, 
+        neg_p   : bool = False,
+        maxfev  : int  = None,
+        use_jac : bool = False
+        ) -> (float, float, float, float):
+    """
+    Fit quasi-polynomial a*(x-s)^p + b to inputs. Useful for checking linearity
+
+    Arguments:
+        x, y    : Data for fit
+        neg_p   : Initialize fit with p = -1. Improves convergence if true p < 0
+        maxfev  : Manually set max function evaluations 
+        use_jac : Use Jacobian in curve fit
+    
+    Returns:
+        (a, s, p, b) : fit parameters
+
+    """
+    def f(x, a, s, p, b):
+        return a*((x-s)**p) + b
+
+
+    def jac(x, a, s, p, b):
+        return np.array([
+            (x-s)**p,                 # df/da
+            -p*((x-s)**(p-1)),        # df/ds
+            np.log(x-s) * ((x-s)**p), # df/dp
+            np.ones(len(x))           # df/db
+        ]).T
+    if not use_jac:
+        jac = None
+
+    # Constraints : x-s > 0 or else discontinuous behavior since df/fp undefined
+    s_max = x.min()-1e-3*np.ptp(x)
+
+    # Initialize fit parameters to give OLS fit line
+    X = sm.add_constant(x.reshape(-1,1))
+    result = sm.OLS(y, X).fit()
+    a0 = result.params[1] # OLS Slope
+    s0 = s_max
+    p0 = -1 if neg_p else 1
+    b0 = result.predict([[1, s_max]])[0]
+    param0 = (a0, s0, p0, b0)
+
+    # Define bounds
+    #p_min, p_max = (-3, -1/3) if neg_p else (1/3, 3)
+    p_min, p_max = (-2, -1/2) if neg_p else (1/2, 2)
+    bounds = [
+        # a, s, p, b
+        [-np.inf, -np.inf, p_min, -np.inf], # lower
+        [np.inf, s_max, p_max,  np.inf] # upper
+    ]
+
+    # Fit
+    try:
+        popt, _ = optimize.curve_fit(f, x, y, p0=param0, bounds=bounds, method='trf', jac=jac, maxfev=maxfev)
+    except RuntimeError as e:
+        print('Power fit failed:',e)
+        return param0
+
+    return popt

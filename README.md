@@ -12,6 +12,11 @@ The goal of this project has been to further my experience with the python tools
 * Outlier detection
 * Visualization with Matplotlib and Seaborn
 
+# Current model evaluation
+5-fold CV RMSE score on training data = $25000 +/- 2000
+
+![FinalLinearFit](./images/FinalLinearFit.png)
+
 # Project files
 * [AmesHousingEDA](AmesHousingEDA.ipynb) - Exploratory data analysis and tuning of the final model
 * [AmesHousingPriceRegression](AmesHousingPriceRegression.ipynb) - The final self-contained pipeline (_forthcoming_)
