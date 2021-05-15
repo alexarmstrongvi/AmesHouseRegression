@@ -2,7 +2,7 @@
 
 This collection of notebooks shows the building of a regression model to predict the sale price of houses in Ames, Iowa.
 The goal of this project has been to deepen my experience with the python tools used in
-* Handling numerical, discrete, ordinal, and categorical data types
+* Handling continuous, discrete, ordinal, and categorical data types
   * Correlation measures between all data type combinations
   * Imputation of missing values
   * Encoding categorical data types (e.g. one-hot, contrast, binary, target)
@@ -27,9 +27,9 @@ OLS Linear Regression Model using 14 features (8 Categorical, 6 Numerical)
 * [test_utilities](test_utilities.ipynb) - Unit tests and examples of the utility functions
 
 # The Data
-This data set describes "the sale of individual residential property in Ames, Iowa from 2006 to 2010. 
+This is the [Kaggle release](https://www.kaggle.com/c/house-prices-advanced-regression-techniques) of the 2011 dataset published by Dean De Cock in the _Journal of Statistics Education_ ([De Cock 2011](http://jse.amstat.org/v19n3/decock.pdf)). 
+It describes "the sale of individual residential property in Ames, Iowa from 2006 to 2010. 
 The data set contains 2930 observations and a large number of explanatory variables (23 nominal, 23 ordinal, 14 discrete, and 20 continuous) involved in assessing home values" 
-([De Cock 2011](http://jse.amstat.org/v19n3/decock.pdf))
 
 ## Feature Breakdown
 * **SalePrice** - the property's sale price in dollars. This is the target variable that you're trying to predict.
