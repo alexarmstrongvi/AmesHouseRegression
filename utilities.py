@@ -9,6 +9,8 @@ Author:
 Example:
     import utilities as utils
 """
+import phik
+from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 import pingouin as pg
 import statsmodels.api as sm
@@ -23,7 +25,6 @@ import numpy as np
 from collections import defaultdict
 
 from typing import Mapping, List, Callable, Any
-
 
 def categorize_data_type(
         df             : pd.DataFrame, 
@@ -170,6 +171,9 @@ def outlier_check(df, index, num_features, discrete_thr=10, print_result=False):
     else:
         return df_num_scores, df_cat_scores
 
+def r2_adjusted(r2, n, k):
+    return 1 - ((1-r2)*(n-1))/(n-k-1)
+
 def corr_to_target(
         df : pd.DataFrame,
         target : Any,
@@ -193,30 +197,31 @@ def corr_to_target(
     result = defaultdict(dict)
     cat_target = target in cat_features
     num_target = not cat_target
-    
     for f in df.columns.drop(target):
         data = df[[f, target]].dropna()
         cat_feature = f in cat_features
         num_feature = not cat_feature
         result['Categorical'][f] = int(cat_feature)
-
         if cat_target and cat_feature:
             pass
         elif cat_target and num_feature:
             pass
         elif num_target and cat_feature:
-            if data[f].value_counts().min() > 1:
+            vc = data[f].value_counts()
+            if vc.min() > 1:
                 n2, pval = pg.welch_anova(data=data, dv=target, between=f).loc[0,['np2','p-unc']].values
                 result['R2'][f] = n2
+                result['R2_adj'][f] = r2_adjusted(n2,len(data),len(vc))
                 result['pval'][f] = pval
-            mi = mutual_info_classif(data[[target]], data[f])[0]
-            result['MI'][f] = mi
+            #mi = mutual_info_classif(data[[target]], data[f])[0]
+            #result['MI'][f] = mi
         elif num_target and num_feature:
             r, pval = stats.pearsonr(data[f], data[target])
             result['R2'][f] = r**2
+            result['R2_adj'][f] = r2_adjusted(r**2, len(data), 1)
             result['pval'][f] = pval
-            mi = mutual_info_regression(data[[f]], data[target])[0]
-            result['MI'][f] = mi
+            #mi = mutual_info_regression(data[[f]], data[target])[0]
+            #result['MI'][f] = mi
 
     return pd.DataFrame(result)
 
@@ -547,3 +552,128 @@ def power_fit(
         return param0
 
     return popt
+
+def inverse_crosstab(table):
+    n = table.sum().sum()
+    x = []
+    y = []
+    for i, row in enumerate(table.index):
+        for j, col in enumerate(table.columns):
+            count = table.at[row,col]
+            x += [j]*count
+            y += [i]*count
+    return np.array(x), np.array(y)
+
+
+# Cochran’s rule of thumb is that at least 80% of the expected cell frequencies is 5 counts or more,
+# and that no expected cell frequency is less than 1 count. For a 2x2 contingency table, Cochran
+# recommends that the test should be used only if the expected frequency in each cell is at
+# least 5 counts.
+
+def phi_coef(cont_table):
+    """
+    - a measure of association for two binary variables
+    - the Pearson correlation coefficient reduces to the phi coefficient in the 2×2 case
+    """
+    chi2 = stats.chi2_contingency(cont_table, correction=False)[0]
+    N = cont_table.sum().sum()
+    return np.sqrt(chi2/N)
+
+
+def tschuprows_t(cont_table):
+    """
+    - Tschuprow, 1925, 1939
+    - Symmetric, order independent measure of correlation between discrete variables with >=2 levels
+    - varies from 0 (no association) to 1 (complete association)
+    - Reduces to the phi coefficient in the 2×2 case 
+    """
+    phi = phi_coef(cont_table)
+    c, r = cont_table.shape
+    correction = ((r-1)*(c-1))**(-1/4)
+    return correction * phi
+
+def contingency_coef(cont_table, adjust=True):
+    """
+    - An adjustment to phi coefficient, intended to adapt it to tables 
+    larger than 2-by-2.
+    
+    - The larger the table your chi-squared coefficient is calculated from,
+    the closer to 1 a perfect association will approach. That’s why some 
+    statisticians suggest using the contingency coefficient only if you’re 
+    working with a 5 by 5 table or larger.
+    (https://www.statisticshowto.com/contingency-coefficient/)
+    """
+    phi = phi_coef(cont_table)
+    correction = 1 / np.sqrt(1 + phi**2)
+    if adjust: # normalize across different contingency table dimensions
+        r, c = cont_table.shape
+        theoretical_max = ((r-1)/r * (c-1)/c)**(1/4)
+    else:
+        theoretical_max = 1
+    return (correction * phi) / theoretical_max
+    # return 1/np.sqrt(1 + N/chi2) / theoretical_max
+
+def cramers_v(cont_table):
+    """
+    - Cramer, 1946
+    - Symmetric, order independent measure of correlation between discrete variables with >=2 levels
+    - Varies from 0 (no association) to 1 (complete association)
+    - Reduces to the phi coefficient in the 2×2 case
+    """
+    phi = phi_coef(cont_table)
+    min_dim = min(cont_table.shape)
+    correction = 1 / np.sqrt(min_dim-1)
+    return correction * phi
+
+def conditional_entropy(p_xy):
+    if not np.allclose(p_xy.sum(), 1): # not normalized
+        p_xy = p_xy/p_xy.sum()
+    p_y = p_xy.sum(axis=1, keepdims=True)
+    return -np.sum(p_xy * np.log(p_xy/p_y))
+
+def uncertainty_coef(cont_table, sym=False):
+    """
+    - Asymmetric (Y|X)
+    - Varies from 0 (no association) to 1 (complete association)
+    - Theil (1970) derived a large part of the uncertainty coefficient, 
+    so it’s occasionally referred to as “Theil’s U”. This is a little misleading, 
+    because the term Theil’s U usually refers to a completely different U used in finance.
+    """
+    if sym:
+        sx = stats.entropy(cont_table.sum(axis=0)) 
+        sy = stats.entropy(cont_table.sum(axis=1))
+        ux = uncertainty_coef(cont_table)
+        uy = uncertainty_coef(cont_table.T)
+        return (sx*ux + sy*uy)/(sx+sy) # Entropy weighted average
+    
+    sx = stats.entropy(cont_table.sum(axis=0))
+    x, y = inverse_crosstab(cont_table)
+    mi = mutual_info_classif(x.reshape(-1,1), y, discrete_features=True)[0]
+    #mi = hx - conditional_entropy(cont_table.to_numpy())
+    return mi/sx
+
+def goodman_kruskals_lambda(cont_table, sym=False):
+    """
+    - Goodman, L.A., Kruskal, W.H. (1954) "Measures of association for cross classifications"
+    - default asymmetric (Y|X) but can symmetric version available
+    """
+    
+    n = cont_table.sum().sum() # Total entries
+    s = cont_table.max(axis=0).sum() # Sum of col max
+    r = cont_table.sum(axis=1).max() # Max of row sum
+
+    if sym:
+        sx = cont_table.max(axis=1).sum()
+        rx = cont_table.sum(axis=0).max()
+        s = (sx+s)/2
+        r = (rx+r)/2
+        
+    e1 = 1 - r/n # P(error) from always guessing Y from max P(Y)
+    e2 = 1 - s/n # P(error) from always guessing Y from max P(X=x,Y)
+    return (e1 - e2) / e1 # = (s-r)/(n-r)
+
+def phik_coef(cont_table):
+    pk = phik.phik.phik_from_hist2d(cont_table.to_numpy())
+    pk_pval, pk_z = phik.significance.significance_from_hist2d(cont_table.to_numpy())
+    return (pk, pk_pval, pk_z)
+

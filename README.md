@@ -1,7 +1,7 @@
 # Overview
 
 This collection of notebooks shows the building of a regression model to predict the sale price of houses in Ames, Iowa.
-The goal of this project has been to further my experience with the python tools used in
+The goal of this project has been to deepen my experience with the python tools used in
 * Handling numerical, discrete, ordinal, and categorical data types
   * Correlation measures between all data type combinations
   * Imputation of missing values
@@ -10,10 +10,13 @@ The goal of this project has been to further my experience with the python tools
 * Statistical analysis with SciKit-Learn, SciPy, Statsmodels, and Pingouin
 * Automated approaches to feature selection and model building (e.g. forward stepwise selection, recursive feature elimination)
 * Outlier detection
-* Visualization with Matplotlib and Seaborn
 
 # Current model evaluation
-5-fold CV RMSE score on training data = $25000 +/- 2000
+OLS Linear Regression Model using 14 features (8 Categorical, 6 Numerical)
+* RMSE : $23000 +/- 2000
+* MSLE : 0.017 +/- 0.002
+* RMSLE : 0.131 +/- 0.009
+* MAPE : 9.4% +/- 0.4%
 
 ![FinalLinearFit](./images/FinalLinearFit.png)
 
