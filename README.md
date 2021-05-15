@@ -12,7 +12,7 @@ The goal of this project has been to deepen my experience with the python tools 
 * Outlier detection
 
 # Current model evaluation
-OLS Linear Regression Model using 14 features (8 Categorical, 6 Numerical)
+Training data 5-fold CV results of OLS linear regression model using 14 features (8 Categorical, 6 Numerical):
 * RMSE : $23000 +/- 2000
 * MSLE : 0.017 +/- 0.002
 * RMSLE : 0.131 +/- 0.009
